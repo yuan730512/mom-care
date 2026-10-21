@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- 共用判斷 ----------
+    function signedIn() { return request.auth != null; }
+    function email() { return request.auth.token.email; }
+    // 白名單：allowlist/{email} 存在才算成員
+    function isMember() {
+      return signedIn() && exists(/databases/$(database)/documents/allowlist/$(email()));
+    }
+    function allowDoc() {
+      return get(/databases/$(database)/documents/allowlist/$(email())).data;
+    }
+    function isAdmin() { return isMember() && allowDoc().role == 'admin'; }
+    function settings() {
+      return get(/databases/$(database)/documents/settings/main).data;
+    }
+    function objectionDays() { return settings().objectionDays; }
+    function backfillDays()  { return settings().backfillDays; }
+    function withinDays(ts, days) {
+      return request.time < ts + duration.value(days, 'd');
+    }
+    function unchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ---------- 白名單 / 成員 ----------
+    match /allowlist/{mail} {
+      allow read: if isMember() || (signedIn() && mail == email());
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+    match /members/{uid} {
+      allow read: if isMember();
+      // 只能建立／修改自己的成員檔（名稱、顏色）
+      allow create, update: if isMember() && uid == request.auth.uid
+        && request.resource.data.email == email();
+      allow delete: if false;
+    }
+
+    // ---------- 設定 ----------
+    match /settings/{id} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+
+    // ---------- 點數表（現行）與版本 ----------
+    match /items/{id} {
+      allow read: if isMember();
+      allow write: if isAdmin();
+    }
+    match /itemVersions/{id} {
+      allow read: if isMember();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ---------- 紀錄 ----------
+    match /records/{rid} {
+      allow read: if isMember();
+
+      // 新增：只能用自己的身分；日期不得早於補登期限；時間戳由伺服器給
+      allow create: if isMember()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.dateTs is timestamp
+        && request.resource.data.dateTs <= request.time + duration.value(1, 'd')
+        && request.resource.data.dateTs + duration.value(backfillDays(), 'd') >= request.time
+        && request.resource.data.points is number
+        && request.resource.data.points >= 0
+        && request.resource.data.status == 'active';
+
+      // 本人修改：異議期內可改內容；逾期只能作廢（status=void）需三方同意，程式端限制
+      allow update: if isMember() && (
+        (
+          resource.data.uid == request.auth.uid
+          && withinDays(resource.data.createdAt, objectionDays())
+          && unchanged(['uid', 'createdAt', 'objections'])
+          && request.resource.data.updatedAt == request.time
+        ) || (
+          // 異議（提出、回應、撤回）：任何成員只能動 objections 欄位；
+          // 逾異議期提出的異議，程式端會標示並不列入計算
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['objections', 'updatedAt'])
+        )
+      );
+      allow delete: if false;
+
+      // 修改歷史：只能新增，不能改、不能刪
+      match /history/{hid} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.by == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------- 討論區 ----------
+    match /posts/{pid} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update: if isMember() && (
+        // 作者可改標題內容（投票開始後程式端不開放）
+        (resource.data.uid == request.auth.uid && unchanged(['uid', 'createdAt', 'votes']))
+        // 任何成員只能改自己的那一票
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['votes', 'updatedAt'])
+           && request.resource.data.votes.diff(resource.data.votes).affectedKeys().hasOnly([request.auth.uid])
+        // 管理者可結案（status）
+        || (isAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'closedAt', 'result']))
+      );
+      allow delete: if false;
+
+      match /comments/{cid} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.uid == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isMember() {
+      return request.auth != null
+        && firestore.exists(/databases/(default)/documents/allowlist/$(request.auth.token.email));
+    }
+    // 照片：photos/{uid}/{檔名}，只能傳到自己的資料夾，10MB 以內的圖片，不能刪
+    match /photos/{uid}/{file} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+  }
+}
