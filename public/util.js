@@ -19,13 +19,13 @@ export function money(n) { return 'NT$ ' + Math.round(n).toLocaleString('zh-TW')
 export function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 export function nowTime() { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 
-// 將圖片縮到最長邊 1600px、JPEG 0.82，省流量與儲存空間
-export async function compressImage(file, maxSide = 1600, quality = 0.82) {
+// 將圖片縮到最長邊 maxSide、JPEG，省流量與儲存空間（照片存在 Firestore，單張須小於 1MB）
+export async function compressImage(file, maxSide = 1000, quality = 0.8, force = false) {
   if (!file.type.startsWith('image/')) return file;
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) return file;
   const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
-  if (scale === 1 && file.size < 1.5 * 1024 * 1024) return file;
+  if (!force && scale === 1 && file.size < 300 * 1024) return file;
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
@@ -42,3 +42,12 @@ export function textOn(hex) {
 }
 
 export const COLOR_CHOICES = ['#2F6DB5', '#B45F12', '#7A5BA6', '#2E6B5E', '#B3261E', '#5B6460', '#0E7490', '#9D174D'];
+
+export function fileToDataURL(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+}
+// 產生小縮圖（給日曆／列表用，存在紀錄裡）
+export async function makeThumb(file, side = 240, quality = 0.7) {
+  const small = await compressImage(file, side, quality, true);
+  return fileToDataURL(small);
+}

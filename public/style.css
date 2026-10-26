@@ -208,3 +208,6 @@ h2 { font-size: 17px; }
   .modal { border-radius: 18px; }
   .pane-mobile-only { display: none; }
 }
+
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.88); z-index: 60; display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.lightbox img { max-width: 96vw; max-height: 92vh; object-fit: contain; border-radius: 6px; }

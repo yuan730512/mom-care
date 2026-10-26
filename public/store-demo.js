@@ -54,7 +54,7 @@ function makeRecords() {
     const u = DEMO_USERS.find(x => x.uid === r[2]);
     const createdAt = new Date(r[0] + 'T' + r[1] + ':00');
     const photos = [];
-    for (let k = 0; k < r[4]; k++) photos.push({ url: `https://picsum.photos/seed/${i}-${k}/600/600`, path: `demo/${i}-${k}` });
+    for (let k = 0; k < r[4]; k++) photos.push({ id: `demo-${i}-${k}` });
     return {
       id: 'r' + i, uid: u.uid, name: u.name, date: r[0], time: r[1],
       itemId: it.id, itemName: it.name, phrase: it.phrase, points: it.points,
@@ -95,6 +95,7 @@ export function createDemoStore() {
     posts: makePosts(),
     comments: { p2: [{ id: 'c1', uid: 'u-big', name: '老大', text: '我可以，那天我休假。', createdAt: new Date() }] },
     history: {},
+    photoData: {},
     listeners: {},
   };
   const emit = (k) => (S.listeners[k] || []).forEach(cb => cb(S[k] ?? null));
@@ -127,9 +128,10 @@ export function createDemoStore() {
     },
     async uploadPhotos(files, onProgress) {
       const out = [];
-      for (const f of files) { out.push({ url: URL.createObjectURL(f), path: 'demo/' + idgen('ph') }); if (onProgress) onProgress(out.length, files.length); }
+      for (const f of files) { const url = URL.createObjectURL(f); const id = idgen('ph'); S.photoData[id] = url; out.push({ id }); if (onProgress) onProgress(out.length, files.length); }
       return out;
     },
+    async getPhoto(id) { const u = S.photoData[id] || (id.startsWith('demo-') ? demoThumb([...id].reduce((a, c) => a + c.charCodeAt(0), 0)) : null); return u ? { thumb: u, data: u } : null; },
     async addRecord(data) {
       const r = { id: idgen('r'), uid: S.user.uid, name: S.user.name, ...data, status: 'active', objections: [], createdAt: ts(), updatedAt: ts() };
       S.records = [...S.records, r]; emit('records'); return r.id;
@@ -173,4 +175,10 @@ export function createDemoStore() {
   };
 }
 
+// 示範用的假照片：純色漸層 SVG
+function demoThumb(seed) {
+  const hues = [[46, 60], [160, 40], [210, 50], [330, 40], [25, 70]][seed % 5];
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='hsl(${hues[0]},${hues[1]}%,78%)'/><stop offset='1' stop-color='hsl(${hues[0]},${hues[1]}%,55%)'/></linearGradient></defs><rect width='240' height='240' fill='url(#g)'/><text x='120' y='130' font-size='22' text-anchor='middle' fill='#fff' font-family='sans-serif'>示範照片</text></svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
 function pick(obj, keys) { const o = {}; for (const k of Object.keys(keys)) o[k] = obj[k]; return o; }

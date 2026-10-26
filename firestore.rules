@@ -95,6 +95,17 @@ service cloud.firestore {
       }
     }
 
+    // ---------- 照片（存在 Firestore，單張 < 1MB）----------
+    match /photos/{id} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 1000000
+        && request.resource.data.data.matches('data:image/.*');
+      allow update, delete: if false;
+    }
+
     // ---------- 討論區 ----------
     match /posts/{pid} {
       allow read: if isMember();

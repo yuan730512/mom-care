@@ -6,10 +6,10 @@
 
 1. 開 https://console.firebase.google.com ，用你的 Google 帳號登入，按「建立專案」。
 2. 專案名稱輸入 `mom-care`（或任何名稱），Google Analytics 可以關掉，建立。
-3. 進入專案後，左邊選單 **建構 → Authentication** → 開始使用 → 登入方式 → **Google** → 啟用，
+3. 進入專案後，左邊選單 **安全性 → Authentication** → 開始使用 → 登入方式 → **Google** → 啟用，
    填專案的公開名稱與支援電子郵件，儲存。
-4. **建構 → Firestore Database** → 建立資料庫 → 位置選 `asia-east1`（台灣）→ 以「正式版模式」開始 → 建立。
-5. **建構 → Storage** → 開始使用 → 正式版模式 → 位置同上 → 完成。
+4. **資料庫和儲存空間 → Firestore Database** → 建立資料庫 → 位置選 `asia-east1`（台灣）→ 以「正式版模式」開始 → 建立。
+5. 不需要開 Storage（新專案要付費方案才能用；照片改存在 Firestore，免費額度 1 GB 足夠家用多年）。
 6. 左上角齒輪 → **專案設定** → 往下捲到「您的應用程式」→ 按 `</>`（網頁）→
    暱稱填 `web`，**不要**勾選 Hosting → 註冊 → 會出現一段 `firebaseConfig = { ... }`，
    把裡面的內容貼給我，我會幫你填進 `public/firebase-config.js`（或你自己改也行）。
@@ -17,7 +17,6 @@
 ## 第二步：貼上安全規則
 
 1. Firestore Database → 上方「規則」分頁 → 全選刪掉 → 貼上 `firestore.rules` 的全部內容 → 發布。
-2. Storage → 「規則」分頁 → 貼上 `storage.rules` 的全部內容 → 發布。
 
 ## 第三步：建立初始資料（只做一次）
 
@@ -76,5 +75,5 @@ Firebase → Authentication → 設定 → **已授權的網域** → 新增你�
 
 ## 備份
 
-每年結算時，統計區的「匯出全部紀錄（CSV）」會下載所有紀錄；
-照片在 Firebase 主控台 → Storage 可以整批下載。建議每年匯出一次存進 Google Drive。
+每年結算時，統計區的「匯出全部紀錄（CSV）」會下載所有紀錄。
+照片存在 Firestore 的 `photos` 集合，可在主控台「匯入／匯出」整批備份（需要 Blaze 方案），或請我寫一支匯出工具。

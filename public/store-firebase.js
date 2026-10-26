@@ -7,8 +7,7 @@ import {
   getFirestore, collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, onSnapshot, query, orderBy, where,
   serverTimestamp, Timestamp, writeBatch,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js';
-import { parseDate } from './util.js';
+import { parseDate, fileToDataURL, makeThumb } from './util.js';
 
 const DEFAULT_SETTINGS = { fund: 3000000, objectionDays: 7, backfillDays: 7, startDate: '', motherName: '媽媽', version: 0 };
 
@@ -17,7 +16,6 @@ export function createFirebaseStore(config) {
   const auth = getAuth(app);
   auth.languageCode = 'zh-TW';
   const db = getFirestore(app);
-  const storage = getStorage(app);
   const provider = new GoogleAuthProvider();
 
   let user = null;
@@ -86,20 +84,23 @@ export function createFirebaseStore(config) {
       user = { ...user, name, color }; onUser(user);
     },
 
+    // 照片存進 Firestore：photos/{id} 放完整圖（約 1000px），紀錄裡只放 240px 縮圖
     async uploadPhotos(files, onProgress) {
       const out = [];
       let i = 0;
       for (const f of files) {
-        const path = `photos/${user.uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.jpg`;
-        const r = ref(storage, path);
-        await new Promise((res, rej) => {
-          const task = uploadBytesResumable(r, f, { contentType: f.type || 'image/jpeg' });
-          task.on('state_changed', null, rej, res);
-        });
-        out.push({ url: await getDownloadURL(r), path });
+        const data = await fileToDataURL(f);
+        if (data.length > 950000) throw new Error('照片壓縮後仍超過 Firestore 單張上限，請換一張');
+        const thumb = await makeThumb(f);
+        const ref = await addDoc(col('photos'), { uid: user.uid, data, thumb, createdAt: now() });
+        out.push({ id: ref.id });
         i++; if (onProgress) onProgress(i, files.length);
       }
       return out;
+    },
+    async getPhoto(id) {
+      const d = await getDoc(doc(db, 'photos', id));
+      return d.exists() ? { thumb: d.data().thumb, data: d.data().data } : null;
     },
 
     async addRecord(data) {

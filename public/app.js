@@ -346,7 +346,7 @@ function renderModal() {
   const m = st.modal;
   el.innerHTML = `<div class="modal-bg" data-action="close-bg"><div class="modal" role="dialog" aria-modal="true">${m.type === 'detail' ? detailModal(m.id) : m.type === 'form' ? formModal(m.id) : m.type === 'post' ? postModal() : profileModal()}</div></div>`;
   if (m.type === 'form') initForm(el, m.id);
-  if (m.type === 'detail') loadHistory(m.id);
+  if (m.type === 'detail') { loadHistory(m.id); loadThumbs(m.id); }
 }
 function openModal(type, id) { st.modal = { type, id, key: type + ':' + (id || '') + ':' + Date.now() }; renderModal(); }
 function closeModal() { st.modal = null; renderModal(); }
@@ -360,7 +360,7 @@ function detailModal(id) {
   return `<div class="band" style="background:${c}"></div><div class="inner">
     <div class="top"><div style="flex:1"><h2>${esc(r.name)}${esc(r.phrase)}</h2><div class="muted">${fmtDate(r.date)} ${r.time} · ${stateTag}</div></div>
       <span class="tag ok" style="font-size:15px">+${r.points} 點</span><button class="btn icon" data-action="close" aria-label="關閉">✕</button></div>
-    ${(r.photos || []).length ? `<div class="photos">${r.photos.map(p => `<a href="${p.url}" target="_blank" rel="noopener"><img src="${p.url}" alt="照片" loading="lazy"></a>`).join('')}</div>` : '<div class="muted">未附照片</div>'}
+    ${(r.photos || []).length ? `<div class="photos">${r.photos.map(p => `<button type="button" class="ph" data-action="photo" data-pid="${esc(p.id || '')}" style="border:none;padding:0;cursor:zoom-in" aria-label="看照片"><img src="${photoCache[p.id]?.thumb || BLANK}" alt="照片"></button>`).join('')}</div>` : '<div class="muted">未附照片</div>'}
     ${r.note ? `<div>${esc(r.note)}</div>` : ''}
     ${objs.map((o, i) => `<div class="objection"><div><b>${esc(o.name)}</b> 提出異議（${fmtDateTime(o.at)}）${o.withdrawn ? '<span class="tag gray">已撤回</span>' : ''}：${esc(o.text)}</div>
       ${o.response ? `<div>${esc(r.name)} 回應：${esc(o.response)}</div>` : ''}
@@ -373,6 +373,16 @@ function detailModal(id) {
     </div>
     <div class="history" id="history"><span>登錄：${fmtDateTime(r.createdAt)}</span></div>
   </div>`;
+}
+const photoCache = {};
+const BLANK = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><rect width='240' height='240' fill='#DDE2DA'/></svg>`);
+async function loadThumbs(rid) {
+  const r = st.records.find(x => x.id === rid); if (!r) return;
+  for (const p of r.photos || []) {
+    if (!photoCache[p.id]) { try { photoCache[p.id] = await store.getPhoto(p.id); } catch (e) { console.warn(e); } }
+    const img = document.querySelector(`#modal [data-pid="${p.id}"] img`);
+    if (img && photoCache[p.id]) img.src = photoCache[p.id].thumb;
+  }
 }
 async function loadHistory(id) {
   const h = await store.getHistory(id).catch(() => []);
@@ -413,12 +423,12 @@ function formModal(id) {
 function initForm(root, id) {
   const r = id ? st.records.find(x => x.id === id) : null;
   const form = root.querySelector('#rec-form');
-  const photos = [...(r ? r.photos : [])]; // {url, path} 已上傳
+  const photos = [...(r ? r.photos : [])]; // {id, thumb} 已上傳
   const pending = [];                       // File 待上傳
   const paint = () => {
     const it = st.items.find(x => x.id === form.itemId.value) || {};
     root.querySelector('#f-preview').innerHTML = `<span class="muted">日曆上會顯示</span><br><b style="color:${colorOf(st.user.uid)}">${esc(form.time.value)} ${esc(st.user.name)}${esc(it.phrase || '')}</b> <span class="muted">+${it.points ?? 0} 點${it.rule ? ' · ' + esc(it.rule) : ''}</span>`;
-    root.querySelector('#f-photos').innerHTML = photos.map((p, i) => `<div class="ph"><img src="${p.url}" alt=""><button type="button" class="rm" data-rm="${i}" aria-label="移除照片">✕</button></div>`).join('')
+    root.querySelector('#f-photos').innerHTML = photos.map((p, i) => `<div class="ph"><img src="${photoCache[p.id]?.thumb || BLANK}" alt=""><button type="button" class="rm" data-rm="${i}" aria-label="移除照片">✕</button></div>`).join('')
       + pending.map((f, i) => `<div class="ph"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" class="rm" data-rmp="${i}" aria-label="移除照片">✕</button></div>`).join('')
       + `<button type="button" class="add" id="f-add"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>加照片</button>`;
   };
@@ -515,6 +525,8 @@ $app.addEventListener('click', async e => {
       case 'respond': { const txt = prompt('回應異議：'); if (!txt) return; await store.patchObjection(t.dataset.id, Number(t.dataset.i), { response: txt }); closeModal(); break; }
       case 'withdraw': { if (!confirm('確定撤回這筆異議？')) return; await store.patchObjection(t.dataset.id, Number(t.dataset.i), { withdrawn: true }); toast('已撤回'); closeModal(); break; }
       case 'add-item-row': $app.querySelector('#item-rows').insertAdjacentHTML('beforeend', itemRow({})); break;
+      case 'photo': await showPhoto(t.dataset.pid, t.querySelector('img')?.src); break;
+      case 'close-photo': document.getElementById('lightbox')?.remove(); break;
     }
   } catch (err) { console.error(err); toast('操作失敗：' + (err.message || err)); }
 });
@@ -560,7 +572,18 @@ document.addEventListener('click', e => {
 document.addEventListener('change', e => {
   if (e.target.id === 'p-item') e.target.form.querySelector('#p-newname').classList.toggle('hidden', e.target.value !== '__new');
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && st.modal) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (document.getElementById('lightbox')) document.getElementById('lightbox').remove(); else if (st.modal) closeModal(); } });
+document.addEventListener('click', e => { const t = e.target.closest('[data-action=close-photo]'); if (t && !$app.contains(t)) document.getElementById('lightbox')?.remove(); });
+
+async function showPhoto(id, fallback) {
+  let src = fallback;
+  try { if (id) { if (!photoCache[id]) photoCache[id] = await store.getPhoto(id); src = photoCache[id]?.data || fallback; } } catch (e) { console.warn(e); }
+  document.getElementById('lightbox')?.remove();
+  const box = document.createElement('div');
+  box.id = 'lightbox'; box.className = 'lightbox'; box.dataset.action = 'close-photo';
+  box.innerHTML = `<img src="${src}" alt="照片"><button class="btn icon" data-action="close-photo" aria-label="關閉" style="position:absolute;top:12px;right:12px;background:#fff">✕</button>`;
+  document.body.appendChild(box);
+}
 
 async function closePost(pid) {
   const p = st.posts.find(x => x.id === pid);
