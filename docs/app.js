@@ -1,7 +1,7 @@
 import { firebaseConfig } from './firebase-config.js';
 import { createDemoStore } from './store-demo.js';
 import { WEEK, todayStr, parseDate, addDays, fmtDate, fmtDateTime, toDate, money, esc, nowTime, compressImage, textOn, COLOR_CHOICES, pad } from './util.js';
-import { recordState, countable, periodRange, totals, split, backfillOk, monthGrid, toCSV, activeObjections, withinWindow } from './logic.js';
+import { recordState, countable, periodRange, totals, split, backfillOk, monthGrid, toCSV, activeObjections, withinWindow, DEFAULT_ITEMS, itemKind, minutesBetween, calcPoints, formulaText } from './logic.js';
 
 // ---------------- 狀態 ----------------
 const params = new URLSearchParams(location.search);
@@ -70,10 +70,10 @@ function render() {
         </main>
       </div>
       ${tabbar()}
-    </div>
-    <div id="modal"></div>`;
+    </div>`;
   applyMobileVisibility();
-  renderModal();
+  mountComments();
+  if (st.modal && st.modal.type === 'detail') renderModal(true);
 }
 
 // 手機：只顯示目前頁籤的區塊；桌機：全部顯示（由 CSS media 決定）
@@ -129,10 +129,13 @@ function tabbar() {
 function eventChip(r, short = false) {
   const state = recordState(r, st.settings);
   const c = colorOf(r.uid);
-  const label = short ? r.itemName : `${r.time} ${esc(r.name)}${esc(r.phrase)}`;
-  const title = `${r.time} ${r.name}${r.phrase}（${r.points} 點${state === 'pending' ? '，待確認' : state === 'disputed' ? '，異議中' : state === 'void' ? '，作廢' : ''}）`;
+  const extra = (r.companionCount ? `（+${r.companionCount}）` : '') + (r.adjust ? ' ✎' : '');
+  const label = short ? esc(shortLabel(r)) : `${r.time} ${esc(r.name)}${esc(r.phrase)}${extra} +${r.points}`;
+  const title = `${r.time}${r.endTime ? '–' + r.endTime : ''} ${r.name}${r.phrase}${extra}（${r.points} 點${state === 'pending' ? '，待確認' : state === 'disputed' ? '，異議中' : state === 'void' ? '，作廢' : ''}）`;
   return `<button class="ev ${state}" data-action="open" data-id="${r.id}" style="background:${c};color:${textOn(c)}" title="${esc(title)}">${label}</button>`;
 }
+function shortLabel(r) { const t = r.kind === 'time' && r.desc ? r.desc : r.itemName; return t.length > 3 ? t.slice(0, 3) : t; }
+
 function recordsOn(date) { return st.records.filter(r => r.date === date).sort((a, b) => a.time.localeCompare(b.time)); }
 
 function calendarView() {
@@ -191,7 +194,7 @@ function logRow(r, withName = false) {
   return `<button class="log-item" data-action="open" data-id="${r.id}">
     <span class="dot" style="background:${colorOf(r.uid)}"></span>
     <span class="d">${fmtDate(r.date, false)} ${r.time}</span>
-    <span class="t">${withName ? esc(r.name) : ''}${esc(r.phrase)}${(r.photos || []).length ? ' 📷' : ''}</span>
+    <span class="t">${withName ? esc(r.name) : ''}${esc(r.phrase)}${r.companionCount ? `（+${r.companionCount}）` : ''}${r.adjust ? ' ✎' : ''}${(r.photos || []).length ? ' 📷' : ''}</span>
     ${tag}<span class="pts">+${r.points}</span>
   </button>`;
 }
@@ -291,10 +294,11 @@ function adminView() {
     <div class="row"><h2>點數表</h2><span class="muted">目前第 ${s.version || 0} 版</span></div>
     <p class="muted" style="margin:0">依協議，調整點數應先在討論區提案投票；通過後在此修改，或由結案時自動套用。修改只影響之後的紀錄。</p>
     <form data-action="save-items" class="card" style="padding:0;border:none;gap:8px">
-      <div class="item-row head"><span>項目（短名）</span><span>日曆顯示文字</span><span>點數</span><span>基本時數／計算方式</span><span>啟用</span></div>
-      <div id="item-rows">${st.items.map(itemRow).join('')}</div>
-      <div class="row"><button type="button" class="btn small" data-action="add-item-row">＋ 新增一列</button></div>
-      <div class="field"><label>修改說明（會記在版本紀錄）</label><input name="note" placeholder="例：依 11/3 投票通過，過夜改為 40 點" required></div>
+      ${st.items.length ? '' : '<div class="preview">尚未建立點數表。下方是建議的預設項目，可直接修改後按「儲存」建立第 1 版。</div>'}
+      <div class="item-row head"><span>項目</span><span>日曆顯示文字</span><span>計算方式</span><span>點數</span><span>乘同行家人</span><span>說明</span><span>啟用</span></div>
+      <div id="item-rows">${(st.items.length ? st.items : DEFAULT_ITEMS).map(itemRow).join('')}</div>
+      <div class="row"><button type="button" class="btn small" data-action="add-item-row">＋ 新增一列</button>${st.items.length && !st.items.some(i => i.kind === 'time') ? '<button type="button" class="btn small" data-action="load-defaults">改用新制預設項目（舊項目改為停用）</button>' : ''}</div>
+      <div class="field"><label>修改說明（會記在版本紀錄）</label><input name="note" placeholder="例：依 11/3 投票通過，過夜照顧改為 60 點" value="${st.items.length ? '' : '初版（依三人協議）'}" required></div>
       <div><button class="btn primary">儲存為第 ${(s.version || 0) + 1} 版</button></div>
     </form>
     ${st.itemVersions.length ? `<details><summary class="muted">版本紀錄（${st.itemVersions.length}）</summary>${[...st.itemVersions].reverse().map(v => `<div class="muted">第 ${v.version} 版 · ${fmtDateTime(v.at)} · ${esc(v.by)} · ${esc(v.note || '')}</div>`).join('')}</details>` : ''}
@@ -325,23 +329,26 @@ function adminView() {
     </form>
   </section>`;
 }
-function itemRow(it = {}, i = 0) {
+function itemRow(it = {}) {
+  const kind = it.kind === 'time' ? 'time' : (it.kind === 'fixed' ? 'fixed' : 'fixed');
   return `<div class="item-row" data-row>
-    <input name="name" value="${esc(it.name || '')}" placeholder="短名" required aria-label="項目">
+    <input name="name" value="${esc(it.name || '')}" placeholder="項目名稱" required aria-label="項目">
     <input name="phrase" value="${esc(it.phrase || '')}" placeholder="陪媽媽…" required aria-label="顯示文字">
+    <select name="kind" aria-label="計算方式" style="min-height:40px;border:1px solid #D5D8D1;border-radius:8px;padding:0 6px"><option value="time" ${kind === 'time' ? 'selected' : ''}>每小時</option><option value="fixed" ${kind === 'fixed' ? 'selected' : ''}>固定</option></select>
     <input name="points" type="number" min="0" value="${it.points ?? 10}" required aria-label="點數">
-    <input name="rule" value="${esc(it.rule || '')}" placeholder="以一次計" aria-label="計算方式">
+    <input name="multiply" type="checkbox" ${it.multiply ? 'checked' : ''} aria-label="乘同行家人" style="width:22px;height:22px;justify-self:center">
+    <input name="rule" value="${esc(it.rule || '')}" placeholder="說明" aria-label="說明">
     <input name="active" type="checkbox" ${it.active === false ? '' : 'checked'} aria-label="啟用" style="width:22px;height:22px;justify-self:center">
     <input type="hidden" name="id" value="${esc(it.id || '')}">
   </div>`;
 }
 
 // ---------------- 對話框 ----------------
-function renderModal() {
+function renderModal(dataChanged = false) {
   const el = document.getElementById('modal'); if (!el) return;
-  mountComments();
-  if (!st.modal) { el.innerHTML = ''; return; }
-  if (el.dataset.key === st.modal.key && st.modal.type !== 'detail') return; // 表單開著時不重畫，避免輸入遺失
+  if (!st.modal) { el.innerHTML = ''; el.dataset.key = ''; return; }
+  // 表單開著時不重畫，避免輸入遺失；詳細頁在資料更新時重畫
+  if (el.dataset.key === st.modal.key && !(dataChanged && st.modal.type === 'detail')) return;
   el.dataset.key = st.modal.key;
   const m = st.modal;
   el.innerHTML = `<div class="modal-bg" data-action="close-bg"><div class="modal" role="dialog" aria-modal="true">${m.type === 'detail' ? detailModal(m.id) : m.type === 'form' ? formModal(m.id) : m.type === 'post' ? postModal() : profileModal()}</div></div>`;
@@ -358,8 +365,11 @@ function detailModal(id) {
   const stateTag = { pending: '<span class="tag warn">待確認</span>', confirmed: '<span class="tag ok">已確認</span>', disputed: '<span class="tag bad">異議中</span>', void: '<span class="tag gray">已作廢</span>' }[state];
   const objs = (r.objections || []);
   return `<div class="band" style="background:${c}"></div><div class="inner">
-    <div class="top"><div style="flex:1"><h2>${esc(r.name)}${esc(r.phrase)}</h2><div class="muted">${fmtDate(r.date)} ${r.time} · ${stateTag}</div></div>
+    <div class="top"><div style="flex:1"><h2>${esc(r.name)}${esc(r.phrase)}</h2><div class="muted">${fmtDate(r.date)} ${r.time}${r.endTime ? '–' + r.endTime : ''} · ${esc(r.itemName)} · ${stateTag}</div></div>
       <span class="tag ok" style="font-size:15px">+${r.points} 點</span><button class="btn icon" data-action="close" aria-label="關閉">✕</button></div>
+    <div class="preview"><div><b>算式：</b>${esc(recordFormula(r))}</div>
+      ${r.companionCount ? `<div><b>同行家人：</b>${esc((r.companions || []).join('、'))}</div>` : ''}
+      ${r.adjust ? `<div><b>調整原因：</b>${esc(r.adjustReason || '')}</div>` : ''}</div>
     ${(r.photos || []).length ? `<div class="photos">${r.photos.map(p => `<button type="button" class="ph" data-action="photo" data-pid="${esc(p.id || '')}" style="border:none;padding:0;cursor:zoom-in" aria-label="看照片"><img src="${photoCache[p.id]?.thumb || BLANK}" alt="照片"></button>`).join('')}</div>` : '<div class="muted">未附照片</div>'}
     ${r.note ? `<div>${esc(r.note)}</div>` : ''}
     ${objs.map((o, i) => `<div class="objection"><div><b>${esc(o.name)}</b> 提出異議（${fmtDateTime(o.at)}）${o.withdrawn ? '<span class="tag gray">已撤回</span>' : ''}：${esc(o.text)}</div>
@@ -374,6 +384,10 @@ function detailModal(id) {
     <div class="history" id="history"><span>登錄：${fmtDateTime(r.createdAt)}</span></div>
   </div>`;
 }
+function recordFormula(r) {
+  if (r.basePoints == null) return `${r.points} 點（舊制）`;
+  return formulaText({ kind: r.kind, hours: r.hours, unit: r.unitPoints, multiplier: r.multiplier || 1, base: r.basePoints, adjust: r.adjust || 0, points: r.points });
+}
 const photoCache = {};
 const BLANK = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><rect width='240' height='240' fill='#DDE2DA'/></svg>`);
 async function loadThumbs(rid) {
@@ -387,58 +401,118 @@ async function loadThumbs(rid) {
 async function loadHistory(id) {
   const h = await store.getHistory(id).catch(() => []);
   const el = document.getElementById('history'); if (!el) return;
-  const label = { date: '日期', time: '時間', itemName: '項目', points: '點數', note: '備註', photos: '照片', status: '狀態', phrase: '內容', itemId: '項目' };
-  el.innerHTML += h.map(x => `<span>${fmtDateTime(x.at)} ${esc(x.name)} 修改：${Object.keys(x.after || {}).filter(k => k !== 'itemId' && k !== 'phrase').map(k => `${label[k] || k} ${esc(fmtVal(x.before?.[k]))} → ${esc(fmtVal(x.after[k]))}`).join('；')}${x.reason ? '（' + esc(x.reason) + '）' : ''}</span>`).join('');
+  const label = { date: '日期', time: '開始', endTime: '結束', itemName: '項目', points: '點數', note: '備註', photos: '照片', status: '狀態', phrase: '內容', desc: '說明', companions: '同行家人', adjust: '加減點', adjustReason: '調整原因' };
+  const hide = ['itemId', 'phrase', 'minutes', 'hours', 'kind', 'companionCount', 'multiplier', 'unitPoints', 'basePoints'];
+  el.innerHTML += h.map(x => `<span>${fmtDateTime(x.at)} ${esc(x.name)} 修改：${Object.keys(x.after || {}).filter(k => !hide.includes(k)).map(k => `${label[k] || k} ${esc(fmtVal(x.before?.[k]))} → ${esc(fmtVal(x.after[k]))}`).join('；')}${x.reason ? '（' + esc(x.reason) + '）' : ''}</span>`).join('');
   if (!h.length) el.innerHTML += '<span>無修改紀錄</span>';
 }
-function fmtVal(v) { if (Array.isArray(v)) return v.length + ' 張'; if (v === 'void') return '作廢'; if (v === 'active') return '有效'; return v ?? '—'; }
+function fmtVal(v) { if (Array.isArray(v)) return v.every(x => typeof x === 'string') ? (v.join('、') || '無') : v.length + ' 張'; if (v === 'void') return '作廢'; if (v === 'active') return '有效'; return v ?? '—'; }
 
 function formModal(id) {
   const r = id ? st.records.find(x => x.id === id) : null;
-  const sel = r ? r.itemId : (activeItems()[0] || {}).id;
+  const items = activeItems();
+  if (!items.length) return `<div class="inner"><div class="top"><h2>新增紀錄</h2><button class="btn icon" data-action="close" aria-label="關閉">✕</button></div><p>點數表還沒建立。${isAdmin() ? '請先到「管理」頁按「儲存」建立第 1 版。' : '請管理者先建立點數表。'}</p></div>`;
+  const sel = r ? r.itemId : (items.find(i => i.kind === 'time') || items[0]).id;
   const minDate = todayStr(addDays(new Date(), -(st.settings.backfillDays || 7)));
+  const start = r ? r.time : nowTime();
+  const [h, mm] = start.split(':').map(Number);
+  const end = r ? (r.endTime || '') : `${pad((h + 1) % 24)}:${pad(mm)}`;
+  const fam = me().family || [];
+  const chosen = r ? (r.companions || []) : [];
+  const allFam = [...new Set([...fam, ...chosen])];
   return `<div class="band" style="background:${colorOf(st.user.uid)}"></div><div class="inner">
     <div class="top"><h2>${r ? '修改紀錄' : '新增紀錄'}</h2><button class="btn icon" data-action="close" aria-label="關閉">✕</button></div>
-    <form id="rec-form" data-action="save-record" data-id="${id || ''}">
+    <form id="rec-form" data-action="save-record" data-id="${id || ''}" style="display:flex;flex-direction:column;gap:14px">
+      <div class="field"><label>做了什麼？</label>
+        <div class="item-pick">${items.map(it => `<button type="button" class="${it.id === sel ? 'on' : ''}" data-pick="${it.id}"><b>${esc(it.name)}</b><span>${it.kind === 'time' ? `每小時 ${it.points} 點` : `${it.points} 點`}</span></button>`).join('')}</div>
+        <input type="hidden" name="itemId" value="${sel}">
+        <span class="muted" id="f-rule"></span>
+      </div>
+      <div class="field" id="f-desc-wrap"><label for="f-desc">陪媽媽做什麼？</label>
+        <input id="f-desc" name="desc" value="${esc(r ? r.desc || '' : '')}" placeholder="例：吃晚餐、看醫生、散步" maxlength="20">
+        <div class="row" style="gap:6px">${['吃早餐', '吃午餐', '吃晚餐', '看醫生', '散步', '聊天', '外出'].map(x => `<button type="button" class="btn small" data-desc="${x}">${x}</button>`).join('')}</div>
+      </div>
+      <div class="field"><label for="f-date">日期</label><input id="f-date" name="date" type="date" required value="${r ? r.date : (st.cal.sel <= todayStr() && st.cal.sel >= minDate ? st.cal.sel : todayStr())}" min="${minDate}" max="${todayStr()}"></div>
       <div class="row">
-        <div class="field" style="flex:3"><label for="f-date">日期</label><input id="f-date" name="date" type="date" required value="${r ? r.date : (st.cal.sel <= todayStr() && st.cal.sel >= minDate ? st.cal.sel : todayStr())}" min="${minDate}" max="${todayStr()}"></div>
-        <div class="field" style="flex:2"><label for="f-time">時間</label><input id="f-time" name="time" type="time" required value="${r ? r.time : nowTime()}"></div>
+        <div class="field" style="flex:1"><label for="f-time">開始</label><input id="f-time" name="time" type="time" required value="${start}"></div>
+        <div class="field" style="flex:1"><label for="f-end">結束</label><input id="f-end" name="endTime" type="time" value="${end}"></div>
       </div>
-      <div class="field" style="margin-top:12px"><label>做了什麼？</label>
-        <div class="item-pick">${activeItems().map(it => `<button type="button" class="${it.id === sel ? 'on' : ''}" data-pick="${it.id}"><b>${esc(it.name)}</b><span>${it.points} 點</span></button>`).join('')}</div>
-        <input type="hidden" name="itemId" value="${sel || ''}">
+      <div class="field" id="f-comp-wrap"><label>同行家人（每多一人，點數多一倍）</label>
+        <div class="row" style="gap:6px" id="f-fam">${allFam.map(n => `<button type="button" class="btn small ${chosen.includes(n) ? 'primary' : ''}" data-fam="${esc(n)}" aria-pressed="${chosen.includes(n)}">${esc(n)}</button>`).join('') || '<span class="muted">還沒有家人名單</span>'}</div>
+        <div class="row" style="gap:6px"><input id="f-newfam" placeholder="新增家人，例：太太、大女兒" maxlength="10" style="flex:1;min-height:40px;padding:6px 10px;border:1px solid #D5D8D1;border-radius:8px"><button type="button" class="btn small" data-action-local="addfam">加入</button></div>
+        <span class="muted">限家人（配偶、子女、孫子女等），不含朋友。新增的家人會記在你的個人設定。</span>
       </div>
+      <details ${r && r.adjust ? 'open' : ''}><summary class="muted">手動加減點（特殊情況才用）</summary>
+        <div class="row" style="margin-top:8px;align-items:flex-end">
+          <div class="field" style="width:110px"><label for="f-adj">加減點</label><input id="f-adj" name="adjust" type="number" step="5" value="${r ? r.adjust || 0 : 0}"></div>
+          <div class="field" style="flex:1"><label for="f-adjr">原因（有調整就必填）</label><input id="f-adjr" name="adjustReason" value="${esc(r ? r.adjustReason || '' : '')}" placeholder="例：候診特別久"></div>
+        </div>
+        <span class="muted">有調整的紀錄會在日曆標上 ✎，其他人可在異議期內提出異議。</span>
+      </details>
       <div class="preview" id="f-preview"></div>
-      <div class="field" style="margin-top:12px"><label>照片（可多張，會自動縮圖）</label>
+      <div class="field"><label>照片（可多張，會自動縮圖）</label>
         <div class="photos" id="f-photos"></div>
         <input type="file" id="f-file" accept="image/*" multiple class="sr-only">
       </div>
-      <div class="field" style="margin-top:12px"><label for="f-note">備註（選填）</label><textarea id="f-note" name="note" rows="2" placeholder="例：下班後回家陪媽媽吃飯">${esc(r ? r.note : '')}</textarea></div>
-      ${r ? `<div class="field" style="margin-top:12px"><label for="f-reason">修改原因（會留在歷史）</label><input id="f-reason" name="reason" required placeholder="例：時間填錯"></div>` : ''}
-      <div class="muted" id="f-hint" style="margin-top:8px"></div>
-      <button class="btn primary" style="width:100%;margin-top:12px;min-height:52px;font-size:17px" id="f-submit">${r ? '儲存修改' : '送出紀錄'}</button>
+      <div class="field"><label for="f-note">備註（選填）</label><textarea id="f-note" name="note" rows="2" placeholder="例：媽媽今天心情很好">${esc(r ? r.note : '')}</textarea></div>
+      ${r ? `<div class="field"><label for="f-reason">修改原因（會留在歷史）</label><input id="f-reason" name="reason" required placeholder="例：時間填錯"></div>` : ''}
+      <div class="muted" id="f-hint"></div>
+      <button class="btn primary" style="width:100%;min-height:52px;font-size:17px" id="f-submit">${r ? '儲存修改' : '送出紀錄'}</button>
     </form>
   </div>`;
 }
+function me() { return st.members.find(m => m.uid === st.user.uid) || st.user; }
+
 function initForm(root, id) {
   const r = id ? st.records.find(x => x.id === id) : null;
-  const form = root.querySelector('#rec-form');
-  const photos = [...(r ? r.photos : [])]; // {id, thumb} 已上傳
+  const form = root.querySelector('#rec-form'); if (!form) return;
+  const photos = [...(r ? r.photos : [])]; // {id} 已上傳
   const pending = [];                       // File 待上傳
-  const paint = () => {
+  const chosen = new Set(r ? r.companions || [] : []);
+  const compute = () => {
     const it = st.items.find(x => x.id === form.itemId.value) || {};
-    root.querySelector('#f-preview').innerHTML = `<span class="muted">日曆上會顯示</span><br><b style="color:${colorOf(st.user.uid)}">${esc(form.time.value)} ${esc(st.user.name)}${esc(it.phrase || '')}</b> <span class="muted">+${it.points ?? 0} 點${it.rule ? ' · ' + esc(it.rule) : ''}</span>`;
+    const kind = itemKind(it);
+    const minutes = kind === 'time' ? minutesBetween(form.time.value, form.endTime.value) : 0;
+    const desc = form.desc.value.trim();
+    const c = calcPoints(it, { minutes, companions: it.multiply ? chosen.size : 0, adjust: Number(form.adjust.value) || 0 });
+    return { it, kind, minutes, desc, c };
+  };
+  const paint = () => {
+    const { it, kind, minutes, desc, c } = compute();
+    root.querySelector('#f-rule').textContent = it.rule || '';
+    root.querySelector('#f-desc-wrap').classList.toggle('hidden', kind !== 'time');
+    root.querySelector('#f-comp-wrap').classList.toggle('hidden', !it.multiply);
+    form.endTime.required = kind === 'time';
+    const phrase = (it.phrase || '') + (kind === 'time' ? desc : '');
+    const comp = it.multiply && chosen.size ? `（+${chosen.size}）` : '';
+    const dur = kind === 'time' ? `${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分，計 ${c.hours} 小時` : '';
+    root.querySelector('#f-preview').innerHTML = `<span class="muted">日曆上會顯示</span><br><b style="color:${colorOf(st.user.uid)}">${esc(form.time.value)} ${esc(st.user.name)}${esc(phrase)}${comp}${c.adjust ? ' ✎' : ''}</b><br><span class="muted">${esc(dur)}${dur ? ' · ' : ''}${esc(formulaText(c))}</span>`;
+    root.querySelector('#f-submit').textContent = (r ? '儲存修改' : '送出紀錄') + `　+${c.points} 點`;
     root.querySelector('#f-photos').innerHTML = photos.map((p, i) => `<div class="ph"><img src="${photoCache[p.id]?.thumb || BLANK}" alt=""><button type="button" class="rm" data-rm="${i}" aria-label="移除照片">✕</button></div>`).join('')
       + pending.map((f, i) => `<div class="ph"><img src="${URL.createObjectURL(f)}" alt=""><button type="button" class="rm" data-rmp="${i}" aria-label="移除照片">✕</button></div>`).join('')
       + `<button type="button" class="add" id="f-add"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>加照片</button>`;
   };
-  form.addEventListener('click', e => {
+  const paintFam = () => {
+    const names = [...new Set([...(me().family || []), ...chosen])];
+    root.querySelector('#f-fam').innerHTML = names.map(n => `<button type="button" class="btn small ${chosen.has(n) ? 'primary' : ''}" data-fam="${esc(n)}" aria-pressed="${chosen.has(n)}">${esc(n)}</button>`).join('') || '<span class="muted">還沒有家人名單</span>';
+  };
+  form.addEventListener('click', async e => {
     const pick = e.target.closest('[data-pick]'); if (pick) { form.itemId.value = pick.dataset.pick; form.querySelectorAll('[data-pick]').forEach(b => b.classList.toggle('on', b === pick)); paint(); }
+    const d = e.target.closest('[data-desc]'); if (d) { form.desc.value = d.dataset.desc; paint(); }
+    const f = e.target.closest('[data-fam]'); if (f) { const n = f.dataset.fam; chosen.has(n) ? chosen.delete(n) : chosen.add(n); paintFam(); paint(); }
+    if (e.target.closest('[data-action-local=addfam]')) {
+      const inp = root.querySelector('#f-newfam'); const n = inp.value.trim(); if (!n) return;
+      const fam = [...new Set([...(me().family || []), n])];
+      chosen.add(n); inp.value = '';
+      try { await store.updateProfile({ family: fam }); } catch (err) { console.warn(err); }
+      paintFam(); paint();
+    }
     if (e.target.closest('#f-add')) root.querySelector('#f-file').click();
     const rm = e.target.closest('[data-rm]'); if (rm) { photos.splice(Number(rm.dataset.rm), 1); paint(); }
     const rmp = e.target.closest('[data-rmp]'); if (rmp) { pending.splice(Number(rmp.dataset.rmp), 1); paint(); }
   });
-  form.time.addEventListener('input', paint);
+  root.querySelector('#f-newfam').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); root.querySelector('[data-action-local=addfam]').click(); } });
+  ['time', 'endTime', 'desc', 'adjust'].forEach(n => form[n].addEventListener('input', paint));
   root.querySelector('#f-file').addEventListener('change', async e => {
     for (const f of e.target.files) pending.push(await compressImage(f));
     e.target.value = ''; paint();
@@ -446,19 +520,29 @@ function initForm(root, id) {
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const btn = root.querySelector('#f-submit'); const hint = root.querySelector('#f-hint');
-    if (!form.itemId.value) { hint.textContent = '請選擇項目'; return; }
+    const { it, kind, minutes, desc, c } = compute();
+    if (!it.id) { hint.textContent = '請選擇項目'; return; }
+    if (kind === 'time' && !desc) { hint.textContent = '請寫陪媽媽做什麼'; form.desc.focus(); return; }
+    if (kind === 'time' && c.hours <= 0) { hint.textContent = '時間至少要半小時'; return; }
+    if (c.adjust && !form.adjustReason.value.trim()) { hint.textContent = '有加減點時，請填寫原因'; form.adjustReason.focus(); return; }
     if (!backfillOk(form.date.value, st.settings)) { hint.textContent = `只能登錄今天往前 ${st.settings.backfillDays} 天內的紀錄`; return; }
     btn.disabled = true;
     try {
       let uploaded = [];
       if (pending.length) { hint.textContent = '上傳照片中…'; uploaded = await store.uploadPhotos(pending, (n, t) => hint.textContent = `上傳照片 ${n}/${t}…`); }
-      const it = st.items.find(x => x.id === form.itemId.value);
-      const data = { date: form.date.value, time: form.time.value, itemId: it.id, itemName: it.name, phrase: it.phrase, points: Number(it.points), note: form.note.value.trim(), photos: [...photos, ...uploaded] };
+      const companions = it.multiply ? [...chosen] : [];
+      const data = {
+        date: form.date.value, time: form.time.value, endTime: kind === 'time' ? form.endTime.value : (form.endTime.value || ''),
+        minutes, hours: c.hours, itemId: it.id, itemName: it.name, kind, desc: kind === 'time' ? desc : '',
+        phrase: it.phrase + (kind === 'time' ? desc : ''), companions, companionCount: companions.length, multiplier: c.multiplier,
+        unitPoints: c.unit, basePoints: c.base, adjust: c.adjust, adjustReason: c.adjust ? form.adjustReason.value.trim() : '', points: c.points,
+        note: form.note.value.trim(), photos: [...photos, ...uploaded],
+      };
       if (r) {
         const changes = {}; for (const k of Object.keys(data)) if (JSON.stringify(data[k]) !== JSON.stringify(r[k])) changes[k] = data[k];
         if (Object.keys(changes).length) await store.updateRecord(r.id, changes, form.reason.value.trim());
         toast('已儲存修改');
-      } else { await store.addRecord(data); toast(`已登錄：${it.phrase} +${it.points} 點`); }
+      } else { await store.addRecord(data); toast(`已登錄：${data.phrase} +${data.points} 點`); }
       closeModal();
     } catch (err) { console.error(err); hint.textContent = '儲存失敗：' + (err.message || err); btn.disabled = false; }
   });
@@ -473,7 +557,7 @@ function postModal() {
       <input type="hidden" name="type" value="discussion">
       <div class="field"><label for="p-title">標題</label><input id="p-title" name="title" required></div>
       <div id="p-prop" class="hidden" style="display:flex;flex-direction:column;gap:12px">
-        <div class="field"><label for="p-item">要調整的項目</label><select id="p-item" name="itemId">${activeItems().map(i => `<option value="${i.id}">${esc(i.name)}（目前 ${i.points} 點）</option>`).join('')}<option value="__new">新增項目…</option></select></div>
+        <div class="field"><label for="p-item">要調整的項目</label><select id="p-item" name="itemId">${activeItems().map(i => `<option value="${i.id}">${esc(i.name)}（目前 ${i.kind === 'time' ? '每小時 ' : ''}${i.points} 點）</option>`).join('')}<option value="__new">新增項目…</option></select></div>
         <div class="field hidden" id="p-newname"><label for="p-name">新項目名稱 / 顯示文字</label><input id="p-name" name="newName" placeholder="短名，例：陪運動"><input name="newPhrase" placeholder="顯示文字，例：陪媽媽運動" style="margin-top:6px"></div>
         <div class="field"><label for="p-val">新點數</label><input id="p-val" name="newValue" type="number" min="0" value="10"></div>
         <div class="field"><label for="p-deadline">投票截止日</label><input id="p-deadline" name="deadline" type="date" value="${todayStr(addDays(new Date(), 7))}"></div>
@@ -483,19 +567,20 @@ function postModal() {
     </form></div>`;
 }
 function profileModal() {
-  const u = st.user;
+  const u = st.user; const fam = me().family || [];
   return `<div class="band" style="background:${colorOf(u.uid)}"></div><div class="inner">
     <div class="top"><h2>個人設定</h2><button class="btn icon" data-action="close" aria-label="關閉">✕</button></div>
     <form data-action="save-profile" style="display:flex;flex-direction:column;gap:12px">
       <div class="field"><label for="pf-name">顯示名稱</label><input id="pf-name" name="name" value="${esc(u.name)}" required maxlength="10"></div>
       <div class="field"><label>我的顏色</label><div class="row">${COLOR_CHOICES.map(c => `<label style="cursor:pointer"><input type="radio" name="color" value="${c}" ${c === u.color ? 'checked' : ''} class="sr-only"><span class="dot" style="width:36px;height:36px;background:${c};outline:${c === u.color ? '3px solid var(--ink)' : 'none'};outline-offset:2px"></span></label>`).join('')}</div></div>
+      <div class="field"><label for="pf-fam">我的家人（同行時可選，一行一位）</label><textarea id="pf-fam" name="family" rows="4" placeholder="太太&#10;大女兒&#10;小女兒">${esc(fam.join('\n'))}</textarea><span class="muted">限配偶、子女、孫子女等家人，不含朋友。</span></div>
       <div class="muted">登入帳號：${esc(u.email)}</div>
       <div class="row"><button class="btn primary">儲存</button>${isAdmin() ? '<button type="button" class="btn" data-action="view" data-v="admin">管理頁</button>' : ''}<button type="button" class="btn" data-action="logout" style="margin-left:auto">登出</button></div>
     </form></div>`;
 }
 
 // ---------------- 事件 ----------------
-$app.addEventListener('click', async e => {
+document.addEventListener('click', async e => {
   const t = e.target.closest('[data-action]'); if (!t) return;
   const a = t.dataset.action;
   if (t.tagName === 'FORM' || t.tagName === 'SELECT') return;
@@ -525,28 +610,29 @@ $app.addEventListener('click', async e => {
       case 'respond': { const txt = prompt('回應異議：'); if (!txt) return; await store.patchObjection(t.dataset.id, Number(t.dataset.i), { response: txt }); closeModal(); break; }
       case 'withdraw': { if (!confirm('確定撤回這筆異議？')) return; await store.patchObjection(t.dataset.id, Number(t.dataset.i), { withdrawn: true }); toast('已撤回'); closeModal(); break; }
       case 'add-item-row': $app.querySelector('#item-rows').insertAdjacentHTML('beforeend', itemRow({})); break;
+      case 'load-defaults': $app.querySelector('#item-rows').innerHTML = [...DEFAULT_ITEMS, ...st.items.map(i => ({ ...i, active: false }))].map(itemRow).join(''); $app.querySelector('[name=note]').value = '改為時間制＋同行家人計點'; toast('已填入新制項目，確認後按儲存'); break;
       case 'photo': await showPhoto(t.dataset.pid, t.querySelector('img')?.src); break;
       case 'close-photo': document.getElementById('lightbox')?.remove(); break;
     }
   } catch (err) { console.error(err); toast('操作失敗：' + (err.message || err)); }
 });
-$app.addEventListener('change', async e => {
+document.addEventListener('change', async e => {
   const t = e.target;
   if (t.dataset.action === 'switch-user') { await store.switchUser(t.value); st.logWho = t.value; }
   if (t.name === 'color' && t.form?.dataset.action === 'save-profile') t.form.querySelectorAll('.dot').forEach(d => d.style.outline = 'none'), (t.nextElementSibling.style.outline = '3px solid var(--ink)');
 });
-$app.addEventListener('submit', async e => {
+document.addEventListener('submit', async e => {
   const f = e.target.closest('form[data-action]'); if (!f) return;
   e.preventDefault();
   const fd = new FormData(f);
   try {
     switch (f.dataset.action) {
       case 'comment': { const text = fd.get('text').trim(); if (!text) return; await store.addComment(f.dataset.id, text); f.reset(); break; }
-      case 'save-profile': await store.updateProfile({ name: fd.get('name').trim(), color: fd.get('color') }); toast('已儲存'); closeModal(); break;
+      case 'save-profile': await store.updateProfile({ name: fd.get('name').trim(), color: fd.get('color'), family: [...new Set(String(fd.get('family') || '').split(/[\n,、]/).map(x => x.trim()).filter(Boolean))] }); toast('已儲存'); closeModal(); break;
       case 'save-settings': await store.saveSettings({ fund: Number(fd.get('fund')), objectionDays: Number(fd.get('objectionDays')), backfillDays: Number(fd.get('backfillDays')), startDate: fd.get('startDate'), motherName: fd.get('motherName').trim() || '媽媽' }); toast('設定已儲存'); break;
       case 'save-allow': await store.saveAllowlist(fd.get('email'), { name: fd.get('name').trim(), role: fd.get('role'), order: Number(fd.get('order')) || 9, color: COLOR_CHOICES[(Number(fd.get('order')) || 1) - 1] || '#2E6B5E' }); toast('名單已更新'); f.reset(); break;
       case 'save-items': {
-        const rows = [...f.querySelectorAll('[data-row]')].map(r => ({ id: r.querySelector('[name=id]').value || undefined, name: r.querySelector('[name=name]').value.trim(), phrase: r.querySelector('[name=phrase]').value.trim(), points: Number(r.querySelector('[name=points]').value), rule: r.querySelector('[name=rule]').value.trim(), active: r.querySelector('[name=active]').checked }));
+        const rows = [...f.querySelectorAll('[data-row]')].map(r => ({ id: r.querySelector('[name=id]').value || undefined, name: r.querySelector('[name=name]').value.trim(), phrase: r.querySelector('[name=phrase]').value.trim(), kind: r.querySelector('[name=kind]').value, points: Number(r.querySelector('[name=points]').value), multiply: r.querySelector('[name=multiply]').checked, rule: r.querySelector('[name=rule]').value.trim(), active: r.querySelector('[name=active]').checked }));
         if (!confirm(`確定儲存為第 ${(st.settings.version || 0) + 1} 版？只影響之後的紀錄。`)) return;
         await store.saveItems(rows, fd.get('note')); toast('點數表已更新'); break;
       }
@@ -573,7 +659,6 @@ document.addEventListener('change', e => {
   if (e.target.id === 'p-item') e.target.form.querySelector('#p-newname').classList.toggle('hidden', e.target.value !== '__new');
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (document.getElementById('lightbox')) document.getElementById('lightbox').remove(); else if (st.modal) closeModal(); } });
-document.addEventListener('click', e => { const t = e.target.closest('[data-action=close-photo]'); if (t && !$app.contains(t)) document.getElementById('lightbox')?.remove(); });
 
 async function showPhoto(id, fallback) {
   let src = fallback;
@@ -593,7 +678,7 @@ async function closePost(pid) {
   if (!confirm(`贊成 ${yes} 票，${pass ? '過半通過' : '未過半'}。${pass ? '結案並套用到點數表（成為新版本）？' : '結案為「未通過」？'}`)) return;
   if (pass && isAdmin()) {
     const items = st.items.map(i => ({ ...i }));
-    if (p.proposal.kind === 'new') items.push({ name: p.proposal.name, phrase: p.proposal.phrase || p.proposal.name, points: p.proposal.newValue, rule: '', active: true });
+    if (p.proposal.kind === 'new') items.push({ name: p.proposal.name, phrase: p.proposal.phrase || p.proposal.name, kind: 'fixed', points: p.proposal.newValue, multiply: false, rule: '', active: true });
     else { const it = items.find(i => i.id === p.proposal.itemId); if (it) it.points = p.proposal.newValue; }
     await store.saveItems(items, `提案「${p.title}」投票通過（贊成 ${yes} 票）`);
   }

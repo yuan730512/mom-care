@@ -40,7 +40,7 @@ export function createFirebaseStore(config) {
       await setDoc(mref, { email, name: a.name || fbUser.displayName || email, color: a.color || '#2E6B5E', order: a.order || 9, createdAt: now() });
     }
     const md = (await getDoc(mref)).data();
-    user = { uid: fbUser.uid, email, name: md.name, color: md.color, role: a.role || 'member', order: md.order ?? a.order ?? 9 };
+    user = { uid: fbUser.uid, email, name: md.name, color: md.color, family: md.family || [], role: a.role || 'member', order: md.order ?? a.order ?? 9 };
     return user;
   }
 
@@ -79,9 +79,9 @@ export function createFirebaseStore(config) {
     subscribePosts: cb => subscribe(query(col('posts'), orderBy('createdAt', 'desc')), cb),
     subscribeComments: (pid, cb) => subscribe(query(collection(db, 'posts', pid, 'comments'), orderBy('createdAt')), cb),
 
-    async updateProfile({ name, color }) {
-      await updateDoc(doc(db, 'members', user.uid), { name, color, updatedAt: now() });
-      user = { ...user, name, color }; onUser(user);
+    async updateProfile(patch) {
+      await updateDoc(doc(db, 'members', user.uid), { ...patch, updatedAt: now() });
+      user = { ...user, ...patch }; onUser(user);
     },
 
     // 照片存進 Firestore：photos/{id} 放完整圖（約 1000px），紀錄裡只放 240px 縮圖
@@ -142,7 +142,7 @@ export function createFirebaseStore(config) {
       const version = (liveSettings.version || 0) + 1;
       items.forEach((it, i) => {
         const id = it.id || doc(col('items')).id;
-        batch.set(doc(db, 'items', id), { name: it.name, phrase: it.phrase, points: Number(it.points), rule: it.rule || '', active: it.active !== false, order: i + 1, updatedAt: now() });
+        batch.set(doc(db, 'items', id), { name: it.name, phrase: it.phrase, kind: it.kind === 'time' ? 'time' : 'fixed', points: Number(it.points), multiply: !!it.multiply, rule: it.rule || '', active: it.active !== false, order: i + 1, updatedAt: now() });
         it.id = id;
       });
       batch.set(doc(col('itemVersions')), { version, items: items.map(it => ({ ...it, points: Number(it.points) })), by: user.name, at: now(), note: note || '' });

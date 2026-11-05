@@ -84,10 +84,54 @@ export function monthGrid(year, month) {
 export function toCSV(records, members, settings) {
   const name = uid => (members.find(m => m.uid === uid) || {}).name || uid;
   const stateName = { pending: '待確認', confirmed: '已確認', disputed: '異議中', void: '作廢' };
-  const rows = [['日期', '時間', '登錄人', '項目', '內容', '點數', '狀態', '照片數', '備註', '登錄時間']];
+  const rows = [['日期', '開始', '結束', '登錄人', '項目', '內容', '計點時數', '同行家人', '人數倍數', '基本點數', '加減點', '調整原因', '點數', '狀態', '照片數', '備註', '登錄時間']];
   for (const r of [...records].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))) {
-    rows.push([r.date, r.time, name(r.uid), r.itemName, r.phrase, r.points, stateName[recordState(r, settings)], (r.photos || []).length, r.note || '', fmt(r.createdAt)]);
+    rows.push([r.date, r.time, r.endTime || '', name(r.uid), r.itemName, r.phrase, r.hours ?? '', (r.companions || []).join('、'), r.multiplier ?? 1, r.basePoints ?? r.points, r.adjust || 0, r.adjustReason || '', r.points, stateName[recordState(r, settings)], (r.photos || []).length, r.note || '', fmt(r.createdAt)]);
   }
   return '﻿' + rows.map(row => row.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
 }
 function fmt(d) { const x = toDate(d); return x && !isNaN(x) ? x.toISOString().slice(0, 16).replace('T', ' ') : ''; }
+
+// ---------------- 計點（v2：時間制＋同行家人＋特殊項目＋加減點）----------------
+// 點數表項目：kind 'time' → points 為每小時點數，乘時數；kind 'fixed' → points 為固定點數。
+// multiply：是否乘以（1＋同行家人數）。一般陪伴預設乘，特殊項目預設不乘。
+export const DEFAULT_ITEMS = [
+  { name: '一般陪伴', phrase: '陪媽媽', kind: 'time', points: 10, multiply: true, rule: '每小時 10 點，以半小時為單位；請寫明做什麼', active: true },
+  { name: '過夜照顧', phrase: '陪媽媽過夜', kind: 'fixed', points: 50, multiply: false, rule: '以一晚計', active: true },
+  { name: '陪同住院', phrase: '陪媽媽住院', kind: 'fixed', points: 50, multiply: false, rule: '以一天或一晚計', active: true },
+  { name: '緊急處理', phrase: '緊急處理媽媽狀況', kind: 'fixed', points: 30, multiply: false, rule: '如半夜送急診、需立即到場', active: true },
+  { name: '處理事務', phrase: '幫媽媽辦事', kind: 'fixed', points: 20, multiply: false, rule: '如銀行、證件、申請補助', active: true },
+];
+
+export function itemKind(it) { return it && it.kind === 'fixed' ? 'fixed' : (it && it.kind === 'time' ? 'time' : 'fixed'); }
+
+// 起訖時間 → 分鐘數；結束早於開始視為跨日
+export function minutesBetween(start, end) {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(':').map(Number), [eh, em] = end.split(':').map(Number);
+  let m = (eh * 60 + em) - (sh * 60 + sm);
+  if (m < 0) m += 24 * 60;
+  return m;
+}
+// 以半小時為單位，不足半小時不計
+export function billableHours(minutes) { return Math.floor((minutes || 0) / 30) / 2; }
+
+export function calcPoints(item, { minutes = 0, companions = 0, adjust = 0 } = {}) {
+  const kind = itemKind(item);
+  const hours = kind === 'time' ? billableHours(minutes) : 0;
+  const unit = Number(item?.points) || 0;
+  const raw = kind === 'time' ? unit * hours : unit;
+  const multiplier = item?.multiply ? 1 + Math.max(0, Number(companions) || 0) : 1;
+  const base = Math.round(raw * multiplier);
+  const final = Math.max(0, base + (Number(adjust) || 0));
+  return { kind, hours, unit, multiplier, base, adjust: Number(adjust) || 0, points: final };
+}
+
+export function formulaText(c) {
+  const parts = [];
+  if (c.kind === 'time') parts.push(`${c.hours} 小時 × ${c.unit}`); else parts.push(`固定 ${c.unit}`);
+  if (c.multiplier > 1) parts.push(`× ${c.multiplier} 人`);
+  let s = parts.join(' ') + ` = ${c.base}`;
+  if (c.adjust) s += ` ${c.adjust > 0 ? '+' : '−'} ${Math.abs(c.adjust)}（調整）= ${c.points}`;
+  return s + ' 點';
+}
