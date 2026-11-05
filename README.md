@@ -7,11 +7,11 @@
 
 | 路徑 | 用途 |
 | --- | --- |
-| `public/index.html` `style.css` `app.js` | 網站畫面與操作 |
-| `public/logic.js` | 點數、期間、分配的計算（純函式） |
-| `public/store-firebase.js` | 正式模式：Google 登入、Firestore（紀錄與照片都存這裡） |
-| `public/store-demo.js` | 示範模式：假資料（網址加 `?demo=1`，或尚未填 config 時自動啟用） |
-| `public/firebase-config.js` | **要填入你的 Firebase 設定** |
+| `docs/index.html` `style.css` `app.js` | 網站畫面與操作 |
+| `docs/logic.js` | 點數、期間、分配的計算（純函式） |
+| `docs/store-firebase.js` | 正式模式：Google 登入、Firestore（紀錄與照片都存這裡） |
+| `docs/store-demo.js` | 示範模式：假資料（網址加 `?demo=1`，或尚未填 config 時自動啟用） |
+| `docs/firebase-config.js` | **要填入你的 Firebase 設定** |
 | `firestore.rules` | 安全規則（誰能讀寫什麼） |
 | `firebase.json` `firestore.indexes.json` | Firebase 專案設定 |
 | `SETUP.md` | 部署步驟 |
